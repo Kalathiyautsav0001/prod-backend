@@ -1,38 +1,54 @@
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
-const path = require('path');
-const fs = require('fs');
+// const path = require('path');
+// const fs = require('fs');
 const Gallery = require('../models/Gallery');
 const auth = require('../middleware/auth');
 
-// Multer configuration
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = './uploads';
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-        const ext = path.extname(file.originalname);
-        cb(null, 'media-' + uniqueSuffix + ext);
+const { CloudinaryStorage } = require('multer-storage-cloudinary');
+const cloudinary = require('../config/cloudinary');
+
+// // Multer configuration
+const storage = new CloudinaryStorage({
+    cloudinary: cloudinary,
+    params: {
+        folder: 'devam-events-gallery',
+        resource_type: 'auto', // automatically detect image or video
+        allowed_formats: ['jpg', 'jpeg', 'png', 'mp4', 'mov', 'avi']
     }
 });
 
-const upload = multer({ 
+const upload = multer({
     storage: storage,
-    fileFilter: (req, file, cb) => {
-        if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
-            cb(null, true);
-        } else {
-            cb(new Error('Only images and videos allowed'), false);
-        }
-    },
-    limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit for videos
+    limits: { fileSize: 100 * 1024 * 1024 } // 100MB
 });
+// const storage = multer.diskStorage({
+//     destination: (req, file, cb) => {
+//         const uploadDir = './uploads';
+//         if (!fs.existsSync(uploadDir)) {
+//             fs.mkdirSync(uploadDir, { recursive: true });
+//         }
+//         cb(null, uploadDir);
+//     },
+//     filename: (req, file, cb) => {
+//         const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+//         const ext = path.extname(file.originalname);
+//         cb(null, 'media-' + uniqueSuffix + ext);
+//     }
+// });
+
+// const upload = multer({ 
+//     storage: storage,
+//     fileFilter: (req, file, cb) => {
+//         if (file.mimetype.startsWith('image/') || file.mimetype.startsWith('video/')) {
+//             cb(null, true);
+//         } else {
+//             cb(new Error('Only images and videos allowed'), false);
+//         }
+//     },
+//     limits: { fileSize: 100 * 1024 * 1024 } // 100MB limit for videos
+// });
 
 // Get all media
 router.get('/', async (req, res) => {
@@ -69,7 +85,8 @@ router.post('/upload', auth, upload.array('media', 20), async (req, res) => {
         const savedMedia = [];
         
         for (const file of files) {
-            const mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${file.filename}`;
+            // const mediaUrl = `${req.protocol}://${req.get('host')}/uploads/${file.filename}`;
+            const mediaUrl = file.path; // Cloudinary URL
             const media = new Gallery({
                 mediaUrl,
                 category,
@@ -97,20 +114,43 @@ router.delete('/:id', auth, async (req, res) => {
         if (!media) {
             return res.status(404).json({ error: 'Media not found' });
         }
-        
-        // Delete file from uploads
-        const filename = media.mediaUrl.split('/').pop();
-        const filePath = path.join(__dirname, '..', 'uploads', filename);
-        if (fs.existsSync(filePath)) {
-            fs.unlinkSync(filePath);
-        }
-        
+
+        // Extract public_id from Cloudinary URL
+        const publicId = media.mediaUrl
+            .split('/')
+            .slice(-2)
+            .join('/')
+            .split('.')[0];
+
+        await cloudinary.uploader.destroy(publicId, { resource_type: 'auto' });
+
         await media.deleteOne();
+
         res.json({ success: true, message: 'Media deleted' });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
 });
+// router.delete('/:id', auth, async (req, res) => {
+//     try {
+//         const media = await Gallery.findById(req.params.id);
+//         if (!media) {
+//             return res.status(404).json({ error: 'Media not found' });
+//         }
+        
+//         // Delete file from uploads
+//         const filename = media.mediaUrl.split('/').pop();
+//         const filePath = path.join(__dirname, '..', 'uploads', filename);
+//         if (fs.existsSync(filePath)) {
+//             fs.unlinkSync(filePath);
+//         }
+        
+//         await media.deleteOne();
+//         res.json({ success: true, message: 'Media deleted' });
+//     } catch (error) {
+//         res.status(500).json({ error: error.message });
+//     }
+// });
 
 // Get all unique categories (for frontend)
 router.get('/categories', async (req, res) => {
